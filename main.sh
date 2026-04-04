@@ -12,19 +12,30 @@ Available Commands:
   version  Show version
   up       Setup wg interface and configure routing
   down     Delete wg interface and restore routing
+  status   Shows the current status of wireguard vpn
   rotate   Change config to a random one from $CONFIGS_DIR
 EOF
 }
 
+colorize() {
+	local color=""
+	case "$1" in
+	GREEN) color="\033[0;32m" ;;
+	RED) color="\033[31m" ;;
+	YELLOW) color="\033[0;33m" ;;
+	*) color="" ;;
+	esac
+	printf "%b" "$color"
+	cat -
+	printf "\033[0m"
+}
 info() {
-	echo "INFO:" "$@" >&2
+	echo -n "INFO: " | colorize GREEN >&2
+	echo "$@" >&2
 }
 err() {
-	echo "ERROR:" "$@" >&2
-}
-die() {
-	err "$@"
-	exit 1
+	echo -n "ERROR: " | colorize RED >&2
+	echo "$@" >&2
 }
 cmd_unrecognized() {
 	cat <<EOF
@@ -142,6 +153,31 @@ cmd_down() {
 	teardown_rotate_cron
 }
 
+cmd_status() {
+	local status ip country
+	if ip="$(ip -4 -br addr show "$INTERFACE_NAME" | awk '{print $3}')"; then
+		status=UP
+	else
+		status=DOWN
+		ip='-'
+	fi
+	if [ -f "$CONFIG_FILENAME" ]; then
+		country="$(grep -o '# [A-Z]\{2,3\}#[0-9]\+' "$CONFIG_FILENAME" | cut -d' ' -f2 | tr '#' ' ')"
+	else
+		country='-'
+	fi
+
+	{
+		printf '%s' "$INTERFACE_NAME"
+		printf '|'
+		printf '%s' "$status" | colorize "$([ "$status" = UP ] && echo GREEN || echo RED)"
+		printf '|'
+		printf '%s' "$ip"
+		printf '|'
+		printf '%s' "$country"
+	} | column --table -s '|' --table-columns INTERFACE,STATUS,IP,COUNTRY
+}
+
 cmd_rotate() {
 	if ! ip link show "$INTERFACE_NAME" &>/dev/null; then
 		err "$INTERFACE_NAME interface is not up."
@@ -194,6 +230,10 @@ down)
 	shift
 	cmd_down "$@"
 	;;
+status)
+	shift
+	cmd_status "$@"
+	;;
 rotate)
 	shift
 	cmd_rotate "$@"
@@ -209,5 +249,8 @@ version | --version)
 '')
 	cmd_usage
 	;;
-*) die "$(cmd_unrecognized)" ;;
+*)
+	err "$(cmd_unrecognized)"
+	exit 1
+	;;
 esac
