@@ -78,36 +78,52 @@ sanitize_wg_config() {
 	fi
 	sed -i -E 's/^(Address = ([^,]+),.+)$/# \1\nAddress = \2/' "$2"
 }
-
+get_if_subnet() {
+	ip -4 route show dev "$1" scope link table main | grep -v "default" | awk '{print $1}' | head -1
+}
 get_default_if() {
-	ip route show default | grep -v -E 'wg|proton' | awk '/default/ {print $5}' | head -1
+	ip route show default table main | grep -v -E 'wg|proton' | awk '/default/ {print $5}' | head -1
 }
 get_default_gw() {
-	ip route show default | grep -v -E 'wg|proton' | awk '/default/ {print $3}' | head -1
+	ip route show default table main | grep -v -E 'wg|proton' | awk '/default/ {print $3}' | head -1
 }
 get_wg_endpoint() {
 	grep -i '^Endpoint' "$CONFIG_FILENAME" | awk -F'[=:]' '{print $2}' | tr -d ' '
 }
 
+# Accepts: (endpoint, table)
 route_via_default() {
-	ip route replace "$1" via "$(get_default_gw)" dev "$(get_default_if)"
+	ip route replace "$1" via "$(get_default_gw)" dev "$(get_default_if)" table "$2"
 }
+# Accepts: (endpoint, table)
 clear_route() {
-	ip route del "$1" 2>/dev/null || true
+	ip route del "$1" table "$2" 2>/dev/null || true
 }
 
-setup_routing_from_subnet_to_wg() {
-	ip route replace default dev "$INTERFACE_NAME" table "$ROUTING_TABLE_ID"
-	if ip rule show | grep -q "from $SOURCE_SUBNET lookup $ROUTING_TABLE_ID"; then
+# Accepts: (interface name, routing table)
+setup_wg_routing_table() {
+	ip route replace default dev "$1" table "$2"
+}
+
+# Accepts; (routing table, priority)
+setup_all_routing_rule() {
+	if ip rule show | grep -q "from all lookup $1"; then
 		return 0
 	fi
-	ip rule add from "$SOURCE_SUBNET" lookup "$ROUTING_TABLE_ID" priority "$ROUTING_RULE_PRIORITY"
-	ip route replace "$SOURCE_SUBNET" dev "${SOURCE_IF}" table "$ROUTING_TABLE_ID"
-
+	ip rule add from all lookup "$1" priority "$2"
 }
-teardown_routing_from_subnet_to_wg() {
-	ip route flush table "$ROUTING_TABLE_ID" 2>/dev/null || true
-	ip rule del from "$SOURCE_SUBNET" lookup "$ROUTING_TABLE_ID" 2>/dev/null || true
+# Accepts: (routing table)
+teardown_all_routing_rule() {
+	ip rule del from all lookup "$1" 2>/dev/null || true
+}
+
+#  Accepts: (source subnet, source if, routing table)
+setup_routing() {
+	ip route replace "$1" dev "$2" table "$3"
+}
+# Accepts: (routing table)
+teardown_routing_table() {
+	ip route flush table "$1" 2>/dev/null || true
 }
 
 setup_rotate_cron() {
@@ -135,21 +151,20 @@ cmd_up() {
 
 	wg-quick up "$INTERFACE_NAME"
 
-	route_via_default "$(get_wg_endpoint)"
-	setup_routing_from_subnet_to_wg
+	setup_wg_routing_table "$INTERFACE_NAME" "$ROUTING_TABLE_ID"
+	route_via_default "$(get_wg_endpoint)" "$ROUTING_TABLE_ID"
+	setup_routing "${SOURCE_SUBNET:-$(get_if_subnet "$SOURCE_IF")}" "$SOURCE_IF" "$ROUTING_TABLE_ID"
+	setup_routing "${DEVICE_SUBNET:-$(get_if_subnet "$DEVICE_IF")}" "$DEVICE_IF" "$ROUTING_TABLE_ID"
+	setup_all_routing_rule "$ROUTING_TABLE_ID" "$ROUTING_RULE_PRIORITY"
 
 	setup_rotate_cron
 }
 cmd_down() {
-	local endpoint=""
-	if endpoint="$(get_wg_endpoint)"; then
-		clear_route "$endpoint"
-	fi
-	teardown_routing_from_subnet_to_wg
+	teardown_all_routing_rule "$ROUTING_TABLE_ID"
+	teardown_routing_table "$ROUTING_TABLE_ID"
 
 	wg-quick down "$INTERFACE_NAME" 2>/dev/null || true
 
-	# TODO: remove rotation cron
 	teardown_rotate_cron
 }
 
@@ -183,27 +198,29 @@ cmd_rotate() {
 		err "$INTERFACE_NAME interface is not up."
 		return 1
 	fi
-	local config="" old_endpoint=""
+	local config="" old_endpoint="" new_endpoint=""
 	old_endpoint="$(get_wg_endpoint)"
 	config="$(pick_random_file_in_dir "$CONFIGS_DIR")"
 	sanitize_wg_config "$config" "$CONFIG_FILENAME"
+	new_endpoint="$(get_wg_endpoint)"
 
+	route_via_default "$new_endpoint" "$ROUTING_TABLE_ID"
 	wg syncconf "$INTERFACE_NAME" <(wg-quick strip "$CONFIG_FILENAME")
-
-	clear_route "$old_endpoint"
-	route_via_default "$(get_wg_endpoint)"
+	if [ "$old_endpoint" != "$new_endpoint" ]; then
+		clear_route "$old_endpoint" "$ROUTING_TABLE_ID"
+	fi
 }
 
 cmd_version() {
 	echo "$PROGRAM: $VERSION"
 }
 
-VERSION="0.0.1"
+VERSION="0.0.2"
 PROGRAM="${0##*/}"
 COMMAND="$1"
 SELF_PATH="$(dirname "$(realpath "$0")")/$PROGRAM"
 
-# global envs that impact the bevavior. Prefixed with RP_
+# global envs that impact the bevavior
 INTERFACE_NAME="${INTERFACE_NAME:-vpn}"
 CONFIGS_DIR="${CONFIGS_DIR:-/etc/wireguard/$INTERFACE_NAME}"
 CONFIG_FILENAME="/etc/wireguard/${INTERFACE_NAME}.conf"
@@ -211,10 +228,9 @@ CONFIG_FILENAME="/etc/wireguard/${INTERFACE_NAME}.conf"
 ROUTING_TABLE_ID="${ROUTING_TABLE_ID:-200}"
 ROUTING_RULE_PRIORITY="${ROUTING_RULE_PRIORITY:-100}"
 
-# traffic originating from this subnet will be routed to our custom wg interface
-# it's supposed to be your local wg subnet
-SOURCE_SUBNET="${SOURCE_SUBNET:-10.154.100.0/24}"
+# traffic originating from this interface will be routed to our custom wg interface
 SOURCE_IF="${SOURCE_IF:-wg0}"
+DEVICE_IF="${DEVICE_IF:-$(get_default_if)}"
 
 DO_NOT_STRIP_THEIR_DNS="${DO_NOT_STRIP_THEIR_DNS:-}"
 
