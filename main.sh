@@ -235,7 +235,7 @@ DEVICE_IF="${DEVICE_IF:-$(get_default_if)}"
 DO_NOT_STRIP_THEIR_DNS="${DO_NOT_STRIP_THEIR_DNS:-}"
 
 ROTATE_CRONTAB="${ROTATE_CRONTAB:-"0 */6 * * *"}"
-CRON_FILENAME="${CRON_FILENAME:-vpn-rotate.sh}"
+CRON_FILENAME="${CRON_FILENAME:-vpn-rotate}"
 
 case "$1" in
 up)
