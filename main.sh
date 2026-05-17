@@ -67,7 +67,7 @@ sanitize_wg_config() {
 	cp --force "$1" "$2"
 
 	# What needs to be done:
-	# - add Table = off, so wg-quick does not routing
+	# - add Table = off, so wg-quick does not configure routing
 	# - remove DNS = ... since we assume our RP has our own adguard home
 	# - remove ipv6 component from Address
 	if ! grep -q "^Table" "$2"; then
@@ -126,6 +126,22 @@ teardown_routing_table() {
 	ip route flush table "$1" 2>/dev/null || true
 }
 
+# Accepts: (interface, fwmark)
+setup_fwmark() {
+	wg set "$1" fwmark "$2"
+}
+# Accepts: (fwmark, priority)
+setup_fwmark_rule() {
+	if ip rule show | grep -q "fwmark 0x$(printf '%x' "$1") lookup main"; then
+		return 0
+	fi
+	ip rule add fwmark "$1" lookup main priority "$2"
+}
+# Accepts: (fwmark)
+teardown_fwmark_rule() {
+	ip rule del fwmark "$1" lookup main 2>/dev/null || true
+}
+
 setup_rotate_cron() {
 	mkdir -p /etc/cron.d/
 	cat <<EOF >/etc/cron.d/"$CRON_FILENAME"
@@ -157,9 +173,13 @@ cmd_up() {
 	setup_routing "${DEVICE_SUBNET:-$(get_if_subnet "$DEVICE_IF")}" "$DEVICE_IF" "$ROUTING_TABLE_ID"
 	setup_all_routing_rule "$ROUTING_TABLE_ID" "$ROUTING_RULE_PRIORITY"
 
+	setup_fwmark "$SOURCE_IF" "$FWMARK"
+	setup_fwmark_rule "$FWMARK" "$FWMARK_RULE_PRIORITY"
+
 	setup_rotate_cron
 }
 cmd_down() {
+	teardown_fwmark_rule "$FWMARK"
 	teardown_all_routing_rule "$ROUTING_TABLE_ID"
 	teardown_routing_table "$ROUTING_TABLE_ID"
 
@@ -233,6 +253,9 @@ SOURCE_IF="${SOURCE_IF:-wg0}"
 DEVICE_IF="${DEVICE_IF:-$(get_default_if)}"
 
 DO_NOT_STRIP_THEIR_DNS="${DO_NOT_STRIP_THEIR_DNS:-}"
+
+FWMARK="${FWMARK:-51820}"
+FWMARK_RULE_PRIORITY="${FWMARK_RULE_PRIORITY:-50}"
 
 ROTATE_CRONTAB="${ROTATE_CRONTAB:-"0 */6 * * *"}"
 CRON_FILENAME="${CRON_FILENAME:-vpn-rotate}"
