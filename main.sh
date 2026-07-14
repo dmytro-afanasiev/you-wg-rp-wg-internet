@@ -176,9 +176,15 @@ cmd_up() {
 	setup_fwmark "$SOURCE_IF" "$FWMARK"
 	setup_fwmark_rule "$FWMARK" "$FWMARK_RULE_PRIORITY"
 
+	# 80 stands for http here, but this mark kind of represents everything that
+	# must go directly to router without protonvpn, like, for example, accepts
+	# from local nginx to clients. Must be configured in nftables manually
+	setup_fwmark_rule "80" "$(( ROUTING_RULE_PRIORITY - 1 ))"
+
 	setup_rotate_cron
 }
 cmd_down() {
+	teardown_fwmark_rule "80"
 	teardown_fwmark_rule "$FWMARK"
 	teardown_all_routing_rule "$ROUTING_TABLE_ID"
 	teardown_routing_table "$ROUTING_TABLE_ID"
