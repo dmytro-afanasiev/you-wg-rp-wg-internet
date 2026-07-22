@@ -105,6 +105,11 @@ setup_wg_routing_table() {
 	ip route replace default dev "$1" table "$2"
 }
 
+# Accepts: (routing table)
+setup_unreachable_default(){
+	ip route replace unreachable default table "$1" metric 32764
+}
+
 # Accepts; (routing table, priority)
 setup_all_routing_rule() {
 	if ip rule show | grep -q "from all lookup $1"; then
@@ -168,6 +173,7 @@ cmd_up() {
 	wg-quick up "$INTERFACE_NAME"
 
 	setup_wg_routing_table "$INTERFACE_NAME" "$ROUTING_TABLE_ID"
+	setup_unreachable_default "$ROUTING_TABLE_ID"
 	route_via_default "$(get_wg_endpoint)" "$ROUTING_TABLE_ID"
 	setup_routing "${SOURCE_SUBNET:-$(get_if_subnet "$SOURCE_IF")}" "$SOURCE_IF" "$ROUTING_TABLE_ID"
 	setup_routing "${DEVICE_SUBNET:-$(get_if_subnet "$DEVICE_IF")}" "$DEVICE_IF" "$ROUTING_TABLE_ID"
@@ -263,7 +269,7 @@ DO_NOT_STRIP_THEIR_DNS="${DO_NOT_STRIP_THEIR_DNS:-}"
 FWMARK="${FWMARK:-51820}"
 FWMARK_RULE_PRIORITY="${FWMARK_RULE_PRIORITY:-50}"
 
-ROTATE_CRONTAB="${ROTATE_CRONTAB:-"0 */6 * * *"}"
+ROTATE_CRONTAB="${ROTATE_CRONTAB:-"0 3 * * 0"}"
 CRON_FILENAME="${CRON_FILENAME:-vpn-rotate}"
 
 case "$1" in
