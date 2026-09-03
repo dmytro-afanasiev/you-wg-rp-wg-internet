@@ -146,6 +146,17 @@ setup_fwmark_rule() {
 teardown_fwmark_rule() {
 	ip rule del fwmark "$1" lookup main 2>/dev/null || true
 }
+# Accepts: (subnet, priority)
+setup_to_subnet_rule() {
+	if ip rule show to "$1" | grep -q "to $1 lookup main"; then
+		return 0
+	fi
+	ip rule add to "$1" lookup main priority "$2"
+}
+# Accepts: (subnet)
+teardown_to_subnet_rule() {
+	ip rule del to "$1" lookup main 2>/dev/null || true
+}
 
 setup_rotate_cron() {
 	mkdir -p /etc/cron.d/
@@ -187,9 +198,12 @@ cmd_up() {
 	# from local nginx to clients. Must be configured in nftables manually
 	setup_fwmark_rule "80" "$(( ROUTING_RULE_PRIORITY - 1 ))"
 
+	setup_to_subnet_rule "$DOCKER_SUBNETS_POOL" "$(( ROUTING_RULE_PRIORITY - 2 ))"
+
 	setup_rotate_cron
 }
 cmd_down() {
+	teardown_to_subnet_rule "$DOCKER_SUBNETS_POOL"
 	teardown_fwmark_rule "80"
 	teardown_fwmark_rule "$FWMARK"
 	teardown_all_routing_rule "$ROUTING_TABLE_ID"
@@ -247,7 +261,7 @@ cmd_version() {
 	echo "$PROGRAM: $VERSION"
 }
 
-VERSION="0.0.2"
+VERSION="0.0.3"
 PROGRAM="${0##*/}"
 COMMAND="$1"
 SELF_PATH="$(dirname "$(realpath "$0")")/$PROGRAM"
@@ -271,6 +285,8 @@ FWMARK_RULE_PRIORITY="${FWMARK_RULE_PRIORITY:-50}"
 
 ROTATE_CRONTAB="${ROTATE_CRONTAB:-"0 3 * * 0"}"
 CRON_FILENAME="${CRON_FILENAME:-vpn-rotate}"
+
+DOCKER_SUBNETS_POOL="${DOCKER_SUBNETS_POOL:-172.16.0.0/12}"
 
 case "$1" in
 up)
