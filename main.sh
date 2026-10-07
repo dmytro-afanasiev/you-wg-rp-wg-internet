@@ -164,6 +164,7 @@ setup_rotate_cron() {
 # Created by $SELF_PATH
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+INTERFACE_NAME="$INTERFACE_NAME"
 
 $ROTATE_CRONTAB root $SELF_PATH rotate
 EOF
